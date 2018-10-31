@@ -54,7 +54,7 @@ def relu(x):
     """
     ### YOUR CODE HERE
     #print(x)
-    res = np.maximum(x,0)
+    res = np.maximum(0,x)
     ### END CODE
     return res
 
@@ -126,7 +126,7 @@ class NetClassifier():
             params = self.params
         acc = None
         ### YOUR CODE HERE
-        prob = self.predict(X)
+        prob = self.predict(X,params)
         acc = np.mean(prob == y)
         ### END CODE
         return acc
@@ -162,35 +162,32 @@ class NetClassifier():
         b2 = params['b2']
         labels = one_in_k_encoding(y, W2.shape[1]) # shape n x k
         
+        
         ### YOUR CODE HERE - FORWARD PASS - compute regularized cost and store relevant values for backprop
+        N = len(X)
         z1 = X.dot(W1) + b1
         a1 = relu(z1)
         z2 = a1.dot(W2) + b2
         yy = softmax(z2)
         
-        log_probs = -np.log(yy[range(len(X)), y])
-        data_loss = np.sum(log_probs)
-        data_loss += reg/2 * (np.sum(np.square(W1)) + np.sum(np.square(W2)))
-        cost = 1/len(X) * data_loss
+        loss = -np.log(yy[np.nonzero(labels)])
+        cost = np.sum(loss)/N
+        reg_cost = reg/2 *(np.sum(np.square(W1)) + np.sum(np.square(W2)))
+        cost += reg_cost
         ### END CODE
         
-        ### YOUR CODE HERE - BACKWARDS PASS - compute derivatives of all (regularized) weights and bias, store them in d_w1, d_w2' d_w2, d_b1, d_b2        
-        delta2 = yy
-        delta2 -= labels
-        d_w2 = np.dot(a1.T,delta2)
-        print ("d_w2 =",d_w2)
-        d_b2 = np.sum(delta2, axis=0, keepdims=True)
-        print ("d_b2 =",d_b2)
+        #change softmax, 
+        
+        ### YOUR CODE HERE - BACKWARDS PASS - compute derivatives of all (regularized) weights and bias, store them in d_w1, d_w2' d_w2, d_b1, d_b2       
+        delta2 = yy - labels
+        d_w2 = (np.dot(a1.T,delta2))/N + reg * W2
+        d_b2 = np.sum(delta2, axis=0, keepdims=True) / N
         
         delta1 = np.dot(delta2,W2.T) * relu_derivative(z1)
-        d_w1 = np.dot(X.T, delta1)
-        print ("d_w1 =",d_w1)
-        d_b1 = np.sum(delta1, axis=0)
-        print ("d_b1 =",d_b1)
+        d_w1 = (np.dot(X.T, delta1))/N + reg * W1
+        d_b1 = np.sum(delta1, axis=0, keepdims=True) / N
         ### END CODE
-        
 
-        print(cost)
         # the return signature
         return cost, {'d_w1': d_w1, 'd_w2': d_w2, 'd_b1': d_b1, 'd_b2': d_b2}
         
@@ -217,50 +214,51 @@ class NetClassifier():
         b1 = init_params['b1']
         W2 = init_params['W2']
         b2 = init_params['b2']
-        train_loss = np.empty(epochs)
         train_acc = np.empty(epochs)
-        val_loss = np.empty(epochs)
+        train_loss = np.empty(epochs)
         val_acc = np.empty(epochs)
+        val_loss = np.empty(epochs)
+        best_tloss = 0
+        best_vloss = 0
         ### YOUR CODE HERE
         self.params = init_params
         for i in range(epochs): 
             #Shuffle Data
-            shuff_X_train = np.copy(X_train)
-            shuff_y_train = np.copy(y_train) 
-            shuff_X_val = np.copy(X_val)
-            shuff_y_val = np.copy(y_val) 
-            rand = np.random.get_state()
-            np.random.shuffle(shuff_X_train)
-            np.random.set_state(rand)
-            np.random.shuffle(shuff_y_train)
-            np.random.set_state(rand)
-            np.random.shuffle(shuff_X_val)
-            np.random.set_state(rand)
-            np.random.shuffle(shuff_y_val)
-            n = len(shuff_X_train)
+            n = len(X_train)
+            permutation = np.random.permutation(n)
+            shuff_X_train = X_train[permutation]
+            shuff_y_train = y_train[permutation]
             b = math.ceil(n/batch_size)
+            train_cost = 0
+            val_cost = 0
             count=0
             for j in range(b):
                 final = min(count+batch_size,n)
                 batchX_train = shuff_X_train[count:final]
                 batchY_train = shuff_y_train[count:final]
-                batchX_val = shuff_X_val[count:final]
-                batchY_val = shuff_y_val[count:final]
                 
+                #Gradient descent
                 cost_t, updates = self.cost_grad(batchX_train,batchY_train,self.params)
-                cost_v, updates_val = self.cost_grad(batchX_val,batchY_val,self.params)
-
-                updates['d_w1'] += reg * W1
-                updates['d_w2'] += reg * W2
-                W1 += lr * updates['d_w1']
-                W2 += lr * updates['d_w2']
-                b1 += lr * updates['d_b1']
-                b2 += lr * updates['d_b2']
-                count += batch_size  
-                train_loss = np.append(train_loss,cost_t)
-                val_loss = np.append(val_loss,cost_v)
-                train_acc = np.append(train_acc,self.score(batchX_train,batchY_train))
-                val_acc = np.append(val_acc,self.score(batchX_val,batchY_val))
+                W1 -= lr * updates['d_w1']
+                W2 -= lr * updates['d_w2']
+                b1 -= lr * updates['d_b1']
+                b2 -= lr * updates['d_b2']
+                self.params = make_dict(W1,b1,W2,b2)
+                count += batch_size
+            
+            t_l, _ = self.cost_grad(X_train,y_train,self.params)
+            v_l, _ = self.cost_grad(X_val,y_val,self.params)
+            
+            if (t_l > best_tloss):
+                best_tloss = t_l
+            
+            if (v_l > best_vloss):
+                best_vloss = v_l
+                
+            train_loss = np.append(train_loss,best_tloss)
+            val_loss = np.append(val_loss,best_vloss)
+            train_acc = np.append(train_acc,self.score(X_train,y_train))
+            val_acc = np.append(val_acc,self.score(X_val,y_val))
                 
         ### END CODE
         # hist dict should look like this with something different than none
